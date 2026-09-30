@@ -1,0 +1,30 @@
+# Local interpreter and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Source workbook and derived files may contain identifiable interview data.
+*.xlsx
+data/processed/
+data/checkpoints/
+*.sqlite
+*.db
+outputs/tables/
+outputs/interactive/
+vault/
+notebooks/results.ipynb
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
