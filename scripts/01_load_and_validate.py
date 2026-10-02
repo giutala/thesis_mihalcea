@@ -11,8 +11,9 @@ import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
-ROOT = Path(__file__).resolve().parents[1]
-WORKBOOK = ROOT / "final_codebook_updated_visual.xlsx"
+from scripts._common import CODEBOOK_WORKBOOK, ROOT
+
+WORKBOOK = CODEBOOK_WORKBOOK
 CODE_COLUMNS = ["participant_id", "question_id", "quote", "code", "theme"]
 LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class ValidationResult(TypedDict):
     matrix: pd.DataFrame
     matrix_diff: pd.DataFrame
     stats_diff: pd.DataFrame
+    questions: pd.DataFrame
 
 
 def _participant_id(value: str) -> str:
@@ -117,15 +119,15 @@ def load_and_validate(
         raise WorkbookSchemaError(f"Codebook is missing required columns: {missing}")
     codes = codes[CODE_COLUMNS].dropna(subset=["participant_id", "theme"]).copy()
     codes["participant_id"] = codes["participant_id"].astype(str)
-    ids = codes["participant_id"].drop_duplicates()
-    participants = pd.DataFrame({"participant_id": ids})
-    # Current workbook labels use Pxx_<participant description> and omit age.
-    participants["id"] = participants["participant_id"].str.extract(r"^(P\d+)")
-    participants["name"] = participants["participant_id"].str.replace(r"^P\d+_", "", regex=True)
-    participants["age"] = pd.NA
-    if participants["id"].isna().any():
-        bad_ids = participants.loc[participants["id"].isna(), "participant_id"].tolist()
+    codes["participant_id"] = codes["participant_id"].str.extract(
+        r"^(P\d+)", expand=False
+    )
+    if codes["participant_id"].isna().any():
+        bad_ids = codes.loc[codes["participant_id"].isna(), "participant_id"].tolist()
         raise WorkbookSchemaError(f"Could not parse participant IDs: {bad_ids}")
+    participants = pd.DataFrame(
+        {"participant_id": sorted(codes["participant_id"].unique())}
+    )
     matrix = pd.crosstab(codes["theme"], codes["participant_id"])
     matrix = (matrix > 0).astype(int)
     matrix.index.name = "Theme"
@@ -139,13 +141,19 @@ def load_and_validate(
         expected.columns = [_participant_id(c) for c in expected.columns]
         all_themes = manual.index.union(expected.index)
         all_participants = manual.columns.union(expected.columns)
-        expected = expected.reindex(index=all_themes, columns=all_participants, fill_value=0)
-        actual = manual.reindex(index=all_themes, columns=all_participants, fill_value=0)
+        expected = expected.reindex(
+            index=all_themes, columns=all_participants, fill_value=0
+        )
+        actual = manual.reindex(
+            index=all_themes, columns=all_participants, fill_value=0
+        )
         matrix_diff = actual.compare(expected, keep_equal=False)
     else:
         matrix_diff = pd.DataFrame()
 
-    assert matrix.isin([0, 1]).all().all(), "Theme matrix must contain only presence values"
+    assert matrix.isin([0, 1]).all().all(), (
+        "Theme matrix must contain only presence values"
+    )
     recomputed = {
         "Participants": int(codes["participant_id"].nunique()),
         "Coded excerpts": int(len(codes)),
@@ -157,24 +165,52 @@ def load_and_validate(
         for _, row in overview.iterrows():
             if len(row) > 1 and pd.notna(row.iloc[0]) and pd.notna(row.iloc[1]):
                 metric_values[str(row.iloc[0]).strip()] = row.iloc[1]
-        stats_diff = pd.DataFrame([
-            {"metric": k, "workbook": metric_values.get(k), "recomputed": v,
-             "match": str(metric_values.get(k)) == str(v)
-             or (pd.notna(metric_values.get(k)) and float(metric_values[k]) == v)}
-            for k, v in recomputed.items()
-        ])
-        theme_counts = codes.groupby("theme")["participant_id"].nunique().rename("recomputed")
+        stats_diff = pd.DataFrame(
+            [
+                {
+                    "metric": k,
+                    "workbook": metric_values.get(k),
+                    "recomputed": v,
+                    "match": str(metric_values.get(k)) == str(v)
+                    or (
+                        pd.notna(metric_values.get(k)) and float(metric_values[k]) == v
+                    ),
+                }
+                for k, v in recomputed.items()
+            ]
+        )
+        theme_counts = (
+            codes.groupby("theme")["participant_id"].nunique().rename("recomputed")
+        )
         manual_counts = {}
         for _, row in overview.iterrows():
             if len(row) > 4 and pd.notna(row.iloc[3]) and pd.notna(row.iloc[4]):
                 manual_counts[str(row.iloc[3]).strip()] = row.iloc[4]
         for theme, n in theme_counts.items():
             stats_diff.loc[len(stats_diff)] = {
-                "metric": f"Theme prevalence: {theme}", "workbook": manual_counts.get(theme),
-                "recomputed": int(n), "match": pd.notna(manual_counts.get(theme))
-                and int(manual_counts[theme]) == int(n)}
+                "metric": f"Theme prevalence: {theme}",
+                "workbook": manual_counts.get(theme),
+                "recomputed": int(n),
+                "match": pd.notna(manual_counts.get(theme))
+                and int(manual_counts[theme]) == int(n),
+            }
     else:
         stats_diff = pd.DataFrame(columns=["metric", "workbook", "recomputed", "match"])
+
+    question_rows = []
+    for question, subset in codes.groupby("question_id", dropna=False, sort=True):
+        question_rows.append(
+            {
+                "question_id": question,
+                "participants_with_any_coded_excerpt": int(
+                    subset.participant_id.nunique()
+                ),
+                "total_participants_in_codebook": int(codes.participant_id.nunique()),
+                "coded_excerpts": int(len(subset)),
+                "prompt_text": pd.NA,
+            }
+        )
+    questions = pd.DataFrame(question_rows)
 
     LOGGER.info(
         "Validated %d participants, %d excerpts, and %d themes",
@@ -188,6 +224,9 @@ def load_and_validate(
         codes.to_csv(destination / "codes.csv", index=False, encoding="utf-8-sig")
         participants.to_csv(
             destination / "participants.csv", index=False, encoding="utf-8-sig"
+        )
+        questions.to_csv(
+            destination / "question_coverage.csv", index=False, encoding="utf-8-sig"
         )
         checkpoint_dir = ROOT / "data" / "checkpoints"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -203,6 +242,9 @@ def load_and_validate(
                 "participants", connection, if_exists="replace", index=False
             )
             matrix.to_sql("theme_matrix", connection, if_exists="replace", index=True)
+            questions.to_sql(
+                "question_coverage", connection, if_exists="replace", index=False
+            )
             stats_diff.to_sql(
                 "validation_checks", connection, if_exists="replace", index=False
             )
@@ -215,6 +257,7 @@ def load_and_validate(
         "matrix": matrix,
         "matrix_diff": matrix_diff,
         "stats_diff": stats_diff,
+        "questions": questions,
     }
 
 

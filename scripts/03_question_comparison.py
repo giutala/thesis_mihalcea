@@ -55,6 +55,18 @@ def compare_questions(
     summary["participant_count"] = summary["participants"].map(
         lambda x: len(x.split(", "))
     )
+    denominators = codes.groupby("question_id")["participant_id"].nunique()
+    summary["participants_with_any_coded_excerpt_for_question"] = summary[
+        "question_id"
+    ].map(denominators)
+    summary["participants_in_codebook"] = codes["participant_id"].nunique()
+    summary["participant_descriptor"] = summary.apply(
+        lambda row: (
+            f"{row.participant_count} of "
+            f"{row.participants_with_any_coded_excerpt_for_question} coded respondents"
+        ),
+        axis=1,
+    )
     assert int(counts.to_numpy().sum()) == len(codes), "Question crosstab lost excerpts"
     assert (summary["participant_count"] <= summary["excerpt_count"]).all()
     fig, axes = plt.subplots(
@@ -62,9 +74,30 @@ def compare_questions(
     )
     for ax, (question, row) in zip(axes[:, 0], counts.iterrows(), strict=True):
         present = row[row > 0].sort_values(ascending=False)
-        ax.barh(present.index, present.values, color="#4B8490")
+        participant_counts = (
+            summary.loc[summary.question_id == question]
+            .set_index("theme")["participant_count"]
+            .reindex(present.index)
+        )
+        y = range(len(present))
+        ax.barh(
+            [v - 0.18 for v in y],
+            participant_counts,
+            height=0.34,
+            color="#285F6D",
+            label="Participants",
+        )
+        ax.barh(
+            [v + 0.18 for v in y],
+            present.values,
+            height=0.34,
+            color="#B8C9CC",
+            label="Excerpt rows",
+        )
+        ax.set_yticks(list(y), labels=present.index)
         ax.set_title(str(question), loc="left")
-        ax.set_xlabel("Coded excerpts")
+        ax.set_xlabel("Corpus descriptors (people and excerpt rows)")
+        ax.legend(frameon=False, fontsize=8)
         ax.invert_yaxis()
     fig.tight_layout()
     if save:

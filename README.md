@@ -1,73 +1,112 @@
-# Qualitative interview coding analysis
+# Qualitative interview analysis workspace
 
-This project produces descriptive summaries and figures from the manually coded
-interview codebook in `final_codebook_updated_visual.xlsx`. The workbook's `code`
-and `theme` columns are fixed source data. No analysis step edits them.
+This repository contains a manually coded excerpt analysis and a local,
+human-reviewed transcript exploration workflow. NLP outputs are search and
+organization aids. They do not assign definitive themes, reconstruct participant
+meaning, or validate the original manual coding.
 
-All counts describe this small interview sample. The embedding and clustering
-step is a validation layer and second opinion only; it does not replace the
-researcher's manual coding or establish new findings.
+## Folder layout
 
-## Setup
+```text
+data/
+  raw/                  Source workbooks; do not edit in analysis scripts
+  processed/            Normalized codebook data and local SQLite inspection DB
+  checkpoints/          Local pipeline checkpoints
+docs/                   Methodology, findings, and workflow notes
+notebooks/              Reproducible analysis and transcript exploration
+outputs/
+  figures/              Thesis-ready summary figures
+    transcript_review/  Static JPEG review figures
+  tables/               Codebook summary tables
+  transcript_review/    Sensitive transcript-derived review artifacts
+scripts/                Reusable analysis functions
+tests/                  Small software behavior checks
+```
 
-Install Python 3.12 and [`uv`](https://docs.astral.sh/uv/), place the source
-workbook in the project root, then run:
+The raw workbooks are ignored by Git because transcripts and derived excerpts
+may contain sensitive data:
+
+- `data/raw/final_codebook_updated_visual.xlsx`
+- `data/raw/interviste_trascrizioni.xlsx`
+- `data/raw/domande_comuni.xlsx`
+
+## Run the analysis
+
+Install Python 3.12 and `uv`, then run:
 
 ```powershell
 uv sync --all-groups
-```
-
-`uv.lock` pins the full environment. No `.env` file or API key is required. The
-embedding step downloads the multilingual sentence-transformer model on its
-first run and caches it locally.
-
-## Reproduce the results
-
-Run the notebook from the project root:
-
-```powershell
 uv run jupyter nbconvert --to notebook --execute --inplace notebooks/results.ipynb
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/transcript_exploration.ipynb
 ```
 
-The notebook is the presentation deliverable: it shows the workbook validation,
-theme matrix, question comparison, participant-level co-occurrence network, and
-the clearly labeled embedding cross-check in reading order. It displays figures
-inline and saves thesis-ready PNGs at 300 dpi.
+The first notebook rebuilds descriptive codebook tables and figures. The
+transcript notebook uses the cached multilingual sentence-transformer model to
+create quote-alignment candidates, adapted-question candidates, theme-based
+passage retrieval, and an editable affinity map. It runs embeddings locally and
+does not upload transcript text. If the embedding model is not cached, set
+`ALLOW_MODEL_DOWNLOAD = True` in the notebook's first code cell to download the
+model weights. Model outputs are candidates for human review.
 
-Individual analyses are importable modules under `scripts/`. For example:
+The transcript notebook generates static JPEG figures in
+`outputs/figures/transcript_review/` and displays them inline: a case-by-theme
+matrix, quote-alignment summary, question-guide section summary, theme retrieval
+summary, and affinity-neighbor map. These are presentation aids; candidate
+similarity and counts do not establish meaning, exposure, or importance. Review
+the supporting CSVs before interpreting any figure.
 
-Because Python import syntax cannot name a module whose filename starts with a
-digit, load numbered modules with `importlib.import_module`:
+The question workbook lists common base prompts, not a verbatim script. The
+workflow ranks likely question matches but leaves the confirmed question ID and
+review note blank for an analyst, since prompts may be adapted or skipped.
 
-```python
-import importlib
+## Transcript-review artifacts
 
-make_theme_matrix = importlib.import_module(
-    "scripts.02_theme_matrix"
-).make_theme_matrix
-```
+Generated under `outputs/transcript_review/`:
 
-The shared codebook loader is `scripts._common.get_data`.
+- `transcript_rows.csv` and `transcript_turns.csv`: source row references,
+  speaker role, participant ID, and text.
+- `quote_alignment.csv`: exact normalized quote locations plus lexical
+  candidates for unmatched excerpts; candidates are explicitly unverified.
+- `question_alignment_candidates.csv`: top semantic matches between
+  interviewer turns and base questions.
+- `question_alignment_review.csv`: persisted human decisions and notes keyed by
+  interviewer turn; reruns carry these decisions forward.
+- `theme_passage_candidates.csv`: additional passages near existing manual
+  theme evidence.
+- `theme_passage_review.csv`: persisted relevance labels and notes for retrieved
+  passages.
+- `affinity_passages.csv` and `affinity_candidates.csv`: evidence cards and
+  cross-participant semantic-neighbor suggestions for manual affinity grouping.
+- `affinity_passage_review.csv` and `affinity_edge_review.csv`: editable,
+  persisted analyst groups, summaries, counterexamples, and accepted links.
+- `../figures/transcript_review/`: JPEG figures displayed by the transcript
+  notebook. The affinity map is an index for case review; each link needs
+  excerpt-level interpretation.
+- `emotion_cues.csv`: optional FEEL-IT sentiment/emotion predictions. This is
+  off by default and requires model weights to be available locally or an
+  explicit download choice.
 
-## Files produced
+Quote candidates and affinity links must be checked against the transcript
+rows and surrounding dialogue. The FEEL-IT classifiers were trained on Italian
+social-media text, so their outputs are cues rather than validated measures of
+interview emotion. Do not interpret model confidence as certainty.
 
-- `data/processed/codes.csv` and `participants.csv`: normalized codebook data
-  and parsed participant details; `analysis.sqlite` provides a local,
-  serverless inspection database.
-- `data/checkpoints/`: pickled parsed and validated DataFrames for re-running
-  downstream stages without reopening or re-parsing the workbook.
-- `outputs/tables/`: participant/theme, per-question, co-occurrence, and
-  cluster/theme tables.
-- `outputs/figures/`: static thesis figures.
-- `outputs/interactive/`: HTML network and embedding visualizations.
-- `vault/`: linked Obsidian notes for participants and themes.
+## Documentation
 
-The codebook, processed excerpts, checkpoint pickles, notebook outputs, HTML
-hover text, and Obsidian notes can contain participant names and interview
-quotations. They are ignored by Git by default; review them for consent and
-disclosure requirements before sharing or changing the ignore rules.
+- `docs/methodology.md`: source, methods, limits, and study details requiring
+  confirmation from primary records.
+- `docs/findings_and_design_implications.md`: codebook-based interpretation
+  draft and design hypotheses.
+- `docs/transcript_workflow.md`: transcript NLP process, review protocol, and
+  interpretation boundaries.
 
-## Development checks
+The existing codebook contains 76 excerpt rows, 10 participant IDs, 9 question
+IDs, and 5 manual themes. Counts are corpus descriptors, not prevalence or
+importance estimates. The source codebook question IDs are not mapped directly
+to the 41-question common guide; the new workflow provides reviewable
+turn/question candidates instead of assuming equivalence.
+
+## Quality checks
 
 ```powershell
 uv run ruff check scripts tests
@@ -76,17 +115,6 @@ uv run mypy scripts
 uv run pytest
 ```
 
-After this directory is initialized or cloned as a Git repository, install the
-hooks with:
-
-```powershell
-uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
-```
-
-The commit-message hook enforces Conventional Commits (for example,
-`feat: add question comparison`).
-The analysis has no trade-date or pricing inputs, external API credentials,
-database service, or desktop UI, so the unrelated date-filtering, `.env`, and Qt
-guidelines do not apply. The requested executable Jupyter notebook is retained
-as the main designer deliverable; the analysis also saves interactive Plotly
-HTML for exploration.
+These software checks do not establish the validity of the original coding or
+the analyst's interpretations. Review quote use against participant consent
+and disclosure requirements before sharing generated files.

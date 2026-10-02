@@ -19,9 +19,8 @@ data/checkpoints/
 *.sqlite
 *.db
 outputs/tables/
-outputs/interactive/
+outputs/transcript_review/
 vault/
-notebooks/results.ipynb
 
 # OS/editor noise
 .DS_Store

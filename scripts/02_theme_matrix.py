@@ -92,7 +92,11 @@ def make_theme_matrix(
         fmt="d",
         ax=ax,
     )
-    ax.set(xlabel="Participant", ylabel="Theme", title="Themes across participants")
+    ax.set(
+        xlabel="Participant ID",
+        ylabel="Manually assigned theme",
+        title="Participants with at least one coded excerpt per theme",
+    )
     ax.tick_params(axis="x", rotation=45)
     fig.tight_layout()
     if save:
