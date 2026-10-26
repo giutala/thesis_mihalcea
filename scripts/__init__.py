@@ -1,5 +1,1 @@
-"""Reproducible descriptive analyses for the interview codebook."""
-
-import logging
-
-LOGGER = logging.getLogger(__name__)
+"""TikTok Research API collection and analysis of Italian BNPL content."""
