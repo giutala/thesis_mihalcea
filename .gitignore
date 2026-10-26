@@ -12,15 +12,11 @@ __pycache__/
 .env.*
 !.env.example
 
-# Source workbook and derived files may contain identifiable interview data.
-*.xlsx
+# TikTok Research API data: raw records, pilot samples, the pseudonym salt, and
+# processed corpora contain usernames, video text, and comments. Only aggregate
+# tables, figures, and the descriptive summary under outputs/ are committed.
+data/raw/tiktok/
 data/processed/
-data/checkpoints/
-*.sqlite
-*.db
-outputs/tables/
-outputs/transcript_review/
-vault/
 
 # OS/editor noise
 .DS_Store
