@@ -1,110 +1,158 @@
-# Qualitative interview analysis workspace
+# BNPL on Italian TikTok
 
-This repository contains a manually coded excerpt analysis and a local,
-human-reviewed transcript exploration workflow. NLP outputs are search and
-organization aids. They do not assign definitive themes, reconstruct participant
-meaning, or validate the original manual coding.
+This repository collects and analyses public TikTok content about Buy Now, Pay
+Later (BNPL) from accounts registered in Italy, through the TikTok Research
+API. It supports a thesis on how young adults in Italy keep track of BNPL
+commitments. The corpus feeds the market, benchmark, and regulatory analysis.
+
+It is not a sample of the thesis population (20-27 year olds): the API reports
+no age, and `region_code` is only the country of the creator's account. All
+labels come from transparent text rules, with no manual coding. The full
+method, pilot, and limitations are in `docs/tiktok_methodology.md`.
 
 ## Folder layout
 
 ```text
 data/
-  raw/                  Source workbooks; do not edit in analysis scripts
-  processed/            Normalized codebook data and local SQLite inspection DB
-  checkpoints/          Local pipeline checkpoints
-docs/                   Methodology, findings, and workflow notes
-notebooks/              Reproducible analysis and transcript exploration
+  raw/tiktok/             Raw API records, pilot, query config, log (ignored)
+  processed/tiktok/       Labelled video and comment corpora (ignored)
+docs/                     Methodology
+notebooks/
+  tiktok_collection.ipynb Pilot, query, and resumable collection
+  tiktok_analysis.ipynb   Tables, figures, and interpretation
 outputs/
-  figures/              Thesis-ready summary figures
-    transcript_review/  Static JPEG review figures
-  tables/               Codebook summary tables
-  transcript_review/    Sensitive transcript-derived review artifacts
-scripts/                Reusable analysis functions
-tests/                  Small software behavior checks
+  tiktok/                 Aggregate tables and findings_summary.md
+  figures/tiktok/         Aggregate figures (300 dpi PNG)
+scripts/                  Client, rules, collection, and analysis modules
+tests/                    Behaviour checks on synthetic data
 ```
 
-The raw workbooks are ignored by Git because transcripts and derived excerpts
-may contain sensitive data:
+| Module | Role |
+|---|---|
+| `scripts/tiktok_terms.py` | Search terms and pilot decisions, period, CCD2 and Black Friday dates, BNPL, provider, post-type, creator-type, and theme rules |
+| `scripts/tiktok_client.py` | Research API client: credential loading, token refresh, bounded retries, quota detection |
+| `scripts/tiktok_collection.py` | Query builder, weekly windows, pilot, and resumable collection of videos, profiles, and comments |
+| `scripts/tiktok_analysis.py` | Corpus building, labels, pseudonymization, tables, figures, and summary |
 
-- `data/raw/final_codebook_updated_visual.xlsx`
-- `data/raw/interviste_trascrizioni.xlsx`
-- `data/raw/domande_comuni.xlsx`
+## Run it
 
-## Run the analysis
+Research API access must be approved first. Put the credentials in an ignored
+`.env` file in the project root, or in the environment:
+
+```text
+TIKTOK_CLIENT_KEY=...
+TIKTOK_CLIENT_SECRET=...
+```
 
 Install Python 3.12 and `uv`, then run:
 
 ```powershell
 uv sync --all-groups
-uv run jupyter nbconvert --to notebook --execute --inplace notebooks/results.ipynb
-uv run jupyter nbconvert --to notebook --execute --inplace notebooks/transcript_exploration.ipynb
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/tiktok_collection.ipynb
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/tiktok_analysis.ipynb
 ```
 
-The first notebook rebuilds descriptive codebook tables and figures. The
-transcript notebook uses the cached multilingual sentence-transformer model to
-create quote-alignment candidates, adapted-question candidates, theme-based
-passage retrieval, and an editable affinity map. It runs embeddings locally and
-does not upload transcript text. If the embedding model is not cached, set
-`ALLOW_MODEL_DOWNLOAD = True` in the notebook's first code cell to download the
-model weights. Model outputs are candidates for human review.
+Video search and profile lookups each allow about 1,000 requests a day. When a
+quota runs out, the collection stops cleanly; rerun it the next day and it
+resumes from the first pending window, profile, or comment thread. Rerunning
+after 20 November 2026 adds the weeks after CCD2 applies.
 
-The transcript notebook generates static JPEG figures in
-`outputs/figures/transcript_review/` and displays them inline: a case-by-theme
-matrix, quote-alignment summary, question-guide section summary, theme retrieval
-summary, and affinity-neighbor map. These are presentation aids; candidate
-similarity and counts do not establish meaning, exposure, or importance. Review
-the supporting CSVs before interpreting any figure.
+## How the data is handled
 
-The question workbook lists common base prompts, not a verbatim script. The
-workflow ranks likely question matches but leaves the confirmed question ID and
-review note blank for an analyst, since prompts may be adapted or skipped.
+1. **What is requested.** Only public videos from accounts registered in Italy
+   that match the kept BNPL keywords or hashtags are requested, from January
+   2024 onward. Each video has 13 fields: ID, handle, time, region,
+   description, automatic transcript, hashtags, four engagement counts,
+   duration, and the STEM flag. Public profiles are fetched for creators of
+   non-ad posts and for the 300 most active creators. Comments are fetched for
+   up to 800 of the most-commented videos, selected by post type (309 in the
+   current run). Comments carry no author handle.
+2. **How the terms were chosen.** A pilot queried each of 20 candidate terms
+   alone over 30 days, at one request per term, and read 20 videos per term.
+   Three terms were dropped as off-topic. The yields and decisions are in
+   `docs/tiktok_methodology.md`.
+3. **How it is collected.** Requests go through a small client instead of the
+   `TikTokResearchApi` package. That package retried every error, including
+   exhausted quota, 60 times without reporting it, and returned more records
+   than `max_total`. The new client:
+   - retries throttling, server errors, and dropped connections with growing
+     delays;
+   - stops at once on the daily-quota error or any invalid request;
+   - counts every request.
+4. **Where raw data lives.** Each 7-day window, profile, and comment thread is
+   saved as JSON Lines in `data/raw/tiktok/` only once it is complete. The
+   exact query and field list are frozen in `query_config.json`, and the
+   collection refuses to resume with a different query. Every completed window
+   and comment thread is logged in `collection_log.jsonl` with its `search_id`
+   and fetch time. The folder is ignored by Git.
+5. **How the corpus is built.** Duplicates are removed by video ID, keeping the
+   latest engagement snapshot. A video is kept only if its description,
+   hashtags, or transcript name a BNPL provider or a BNPL phrase. Each video
+   is labelled with:
+   - its BNPL signal (named provider or generic phrase);
+   - the providers it names;
+   - its post type (personal experience, financial commentary, shop ad, or
+     other);
+   - its creator type (for profiled creators);
+   - nine theme cues;
+   - its period (before or after CCD2 applies on 20 November 2026).
 
-## Transcript-review artifacts
+   Every filtering step is reported as a count in
+   `outputs/tiktok/tables/corpus_funnel.csv`. Trend charts use fully collected
+   months only.
+6. **Pseudonymization.** Handles are replaced by salted SHA-256 creator IDs in
+   the processed corpora and in every table and figure. The salt never leaves
+   the raw folder.
+7. **What is shared.** Only aggregate tables, figures, and the generated
+   `findings_summary.md` are committed. The notebooks display aggregates only.
+   The thesis paraphrases quotes and names no individual accounts. Raw data is
+   deleted at the end of the thesis, subject to the TikTok Research API terms
+   and university data policy.
+8. **Credentials.** Credentials are read from the environment or the ignored
+   `.env` file and are never written to notebooks or outputs.
 
-Generated under `outputs/transcript_review/`:
+## Main findings
 
-- `transcript_rows.csv` and `transcript_turns.csv`: source row references,
-  speaker role, participant ID, and text.
-- `quote_alignment.csv`: exact normalized quote locations plus lexical
-  candidates for unmatched excerpts; candidates are explicitly unverified.
-- `question_alignment_candidates.csv`: top semantic matches between
-  interviewer turns and base questions.
-- `question_alignment_review.csv`: persisted human decisions and notes keyed by
-  interviewer turn; reruns carry these decisions forward.
-- `theme_passage_candidates.csv`: additional passages near existing manual
-  theme evidence.
-- `theme_passage_review.csv`: persisted relevance labels and notes for retrieved
-  passages.
-- `affinity_passages.csv` and `affinity_candidates.csv`: evidence cards and
-  cross-participant semantic-neighbor suggestions for manual affinity grouping.
-- `affinity_passage_review.csv` and `affinity_edge_review.csv`: editable,
-  persisted analyst groups, summaries, counterexamples, and accepted links.
-- `../figures/transcript_review/`: JPEG figures displayed by the transcript
-  notebook. The affinity map is an index for case review; each link needs
-  excerpt-level interpretation.
-- `emotion_cues.csv`: optional FEEL-IT sentiment/emotion predictions. This is
-  off by default and requires model weights to be available locally or an
-  explicit download choice.
+From the run of 26 October 2026: 97,166 BNPL videos from 8,099 accounts,
+covering January 2024 to August 2026, plus 18,078 comments on 309 videos and
+997 creator profiles. The weeks from 14 September to 18 October 2026 and about
+1,350 profiles are still to be collected. The tables, figures, and full
+interpretation are in `notebooks/tiktok_analysis.ipynb`.
 
-Quote candidates and affinity links must be checked against the transcript
-rows and surrounding dialogue. The FEEL-IT classifiers were trained on Italian
-social-media text, so their outputs are cues rather than validated measures of
-interview emotion. Do not interpret model confidence as certainty.
+1. **BNPL reaches people on TikTok mainly as a merchant feature.** 91% of BNPL
+   videos are shop ads: "paga in 3 rate con Klarna" next to a price and a
+   WhatsApp number. Financial commentary is 159 videos (0.16%), and
+   first-person posts are 37 (0.04%), about half of them creator product
+   reviews. The 100 most active accounts produce 47% of all videos, and BNPL
+   providers' own accounts are almost absent.
+2. **Ads and critics tell opposite stories.** 31% of ads present BNPL as free
+   and easy ("senza interessi", "0%"), and almost none mention fees, missed
+   payments, or totals. In commentary, 33% discuss fees and failed payments,
+   20% losing track of installments, and 11% regulation. Commentary reaches no
+   more viewers than an ad: both have a median of about 1,050 views.
+3. **Klarna dominates, and shops offer several providers side by side.**
+   Klarna accounts for 66% of provider mentions and grew 6.6 times from the
+   first quarter of 2024 to the second quarter of 2026; Scalapay grew 3.8
+   times. 18% of videos that name a provider name two or more. This is the
+   checkout-level counterpart of the fragmentation the thesis studies.
+4. **Critical discussion is small but growing.** Commentary rose from 14 videos
+   in 2024 to 60 in 2025 and 85 in January-September 2026. It peaked in August
+   2026 around paying for groceries and holidays in installments, and posts
+   explaining the new consumer credit rules appear from that month.
+5. **TikTok does not show how users track their commitments.** Comments under
+   ads are mostly purchase questions (24% ask about price, availability, or
+   shipping). Theme words appear in under 5% of comments. Evidence for RQ1 and
+   RQ2 therefore has to come from the interviews and artefact walk-throughs.
+6. **Volume and timing.** BNPL content roughly quadrupled, from about 1,300
+   videos a month in early 2024 to about 5,900 in July 2026, with a dip every
+   August. There is no consistent Black Friday peak in posting. No data after
+   CCD2 exists yet; the before-and-after comparison appears automatically
+   after a rerun.
 
-## Documentation
-
-- `docs/methodology.md`: source, methods, limits, and study details requiring
-  confirmation from primary records.
-- `docs/findings_and_design_implications.md`: codebook-based interpretation
-  draft and design hypotheses.
-- `docs/transcript_workflow.md`: transcript NLP process, review protocol, and
-  interpretation boundaries.
-
-The existing codebook contains 76 excerpt rows, 10 participant IDs, 9 question
-IDs, and 5 manual themes. Counts are corpus descriptors, not prevalence or
-importance estimates. The source codebook question IDs are not mapped directly
-to the 41-question common guide; the new workflow provides reviewable
-turn/question candidates instead of assuming equivalence.
+**Limits.** Labels are keyword rules applied to captions, hashtags, and
+transcripts, not validated codes. The corpus covers creators, not viewers, and
+gives no information about age. Volume reflects TikTok's growth and API
+coverage as well as BNPL adoption.
 
 ## Quality checks
 
@@ -115,6 +163,4 @@ uv run mypy scripts
 uv run pytest
 ```
 
-These software checks do not establish the validity of the original coding or
-the analyst's interpretations. Review quote use against participant consent
-and disclosure requirements before sharing generated files.
+The tests run on synthetic data and need no API access.
