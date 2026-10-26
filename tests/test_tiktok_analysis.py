@@ -145,3 +145,29 @@ def test_complete_months_require_every_day_collected() -> None:
     ]
 
     assert analysis.complete_months(files) == {"2026-01"}
+
+
+def test_wilson_interval_matches_reference_values() -> None:
+    low, high = analysis.wilson_interval([0, 5, 0], [10, 10, 0])
+
+    assert low[0] == 0 and abs(high[0] - 0.2775) < 1e-3
+    assert abs(low[1] - 0.2366) < 1e-3 and abs(high[1] - 0.7634) < 1e-3
+    assert pd.isna(low[2])
+
+
+def test_bootstrap_median_interval_brackets_median() -> None:
+    values = pd.Series(range(1, 101), dtype=float)
+    low, high = analysis.bootstrap_median_interval(values)
+
+    assert low <= values.median() <= high
+    assert analysis.bootstrap_median_interval(values) == (low, high)
+
+
+def test_weekly_reference_is_flat_for_constant_volume() -> None:
+    weeks = pd.date_range("2026-01-05", periods=20, freq="7D")
+    corpus = pd.DataFrame({"week_start": weeks.repeat(10)})
+    reference = analysis.weekly_index_reference(corpus)
+
+    assert reference["week_offset"].tolist() == list(range(-6, 7))
+    assert (reference[["p05", "p95"]] == 100).all().all()
+    assert reference["anchor_weeks"].iloc[0] == 20 - 12

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
@@ -47,6 +48,14 @@ LOCAL_TIMEZONE = "Europe/Rome"
 CUE_COLUMNS = [f"cue_{name}" for name in CUE_PATTERNS]
 BLACK_FRIDAY_WINDOW_WEEKS = 6
 MERCHANT_AD_SHARE = 0.5
+# Normal quantile for 95% intervals, bootstrap settings, and the minimum video
+# age for engagement comparisons (most views accrue in a video's first weeks).
+Z_95 = 1.959964
+BOOTSTRAP_RESAMPLES = 2000
+RANDOM_SEED = 42
+ENGAGEMENT_MIN_AGE_DAYS = 90
+# Groups smaller than this show their 95% interval in heatmap cells.
+SMALL_GROUP = 1000
 # Categorical slots from the validated reference palette; ink stays neutral.
 SERIES_COLORS = ("#2a78d6", "#eb6834", "#1baf7a")
 SEQUENTIAL_CMAP = "Blues"
@@ -479,6 +488,82 @@ def select_comment_videos(
     return selected
 
 
+def wilson_interval(
+    successes: Any, trials: Any, z: float = Z_95
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return Wilson score interval bounds for binomial proportions.
+
+    Parameters
+    ----------
+    successes, trials : array-like of int
+        Counts of matching records and group sizes.
+    z : float, default=Z_95
+        Normal quantile; the default gives a 95% interval.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        Lower and upper bounds; ``nan`` where ``trials`` is zero.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    The Wilson interval stays inside [0, 1] and keeps close to nominal
+    coverage for small groups and proportions near zero, where the normal
+    approximation fails. The corpus is not a random sample, so the interval
+    expresses how stable a rate is given the number of videos behind it,
+    treating posting as a random process, not sampling error.
+    """
+    k = np.asarray(successes, dtype=float)
+    n = np.asarray(trials, dtype=float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        p = k / n
+        denominator = 1 + z**2 / n
+        centre = (p + z**2 / (2 * n)) / denominator
+        half = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denominator
+    return np.clip(centre - half, 0, 1), np.clip(centre + half, 0, 1)
+
+
+def bootstrap_median_interval(
+    values: pd.Series, resamples: int = BOOTSTRAP_RESAMPLES, seed: int = RANDOM_SEED
+) -> tuple[float, float]:
+    """Return a percentile bootstrap 95% interval for a median.
+
+    Parameters
+    ----------
+    values : pandas.Series
+        Observations; missing values are dropped.
+    resamples : int, default=BOOTSTRAP_RESAMPLES
+        Number of bootstrap resamples.
+    seed : int, default=RANDOM_SEED
+        Random seed, so reruns give the same interval.
+
+    Returns
+    -------
+    tuple of float
+        Lower and upper bounds; ``nan`` when there are no observations.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    The bootstrap makes no distributional assumption, which suits view
+    counts that span several orders of magnitude.
+    """
+    data = values.dropna().to_numpy(dtype=float)
+    if data.size == 0:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    medians = np.median(rng.choice(data, size=(resamples, data.size)), axis=1)
+    low, high = np.percentile(medians, [2.5, 97.5])
+    return float(low), float(high)
+
+
 def _explode_providers(corpus: pd.DataFrame) -> pd.DataFrame:
     exploded = corpus.assign(provider=corpus["providers"].str.split(";")).explode(
         "provider"
@@ -532,6 +617,58 @@ def black_friday_index(corpus: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["year", "week_offset", "videos", "index"])
 
 
+def weekly_index_reference(corpus: pd.DataFrame) -> pd.DataFrame:
+    """Build the distribution of the Black Friday index around ordinary weeks.
+
+    Parameters
+    ----------
+    corpus : pandas.DataFrame
+        Video corpus with ``week_start``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``week_offset`` with the 5th, 50th, and 95th percentiles of the index
+        and the number of anchor weeks used.
+
+    Raises
+    ------
+    KeyError
+        If ``week_start`` is missing.
+
+    Notes
+    -----
+    Every week with six collected weeks on each side is treated as if it were
+    Black Friday week, and the same 13-week index is computed around it. The
+    resulting band is the range of ordinary week-to-week variation, so a
+    Black Friday value outside it is unusual and one inside it is not.
+    """
+    weekly = corpus.groupby("week_start").size().sort_index()
+    weeks = pd.date_range(weekly.index.min(), weekly.index.max(), freq="7D")
+    counts = weekly.reindex(weeks, fill_value=0).to_numpy(dtype=float)
+    span = BLACK_FRIDAY_WINDOW_WEEKS
+    profiles = []
+    for anchor in range(span, len(counts) - span):
+        baseline = counts[anchor - span : anchor].mean()
+        if baseline > 0:
+            profiles.append(100 * counts[anchor - span : anchor + span + 1] / baseline)
+    columns = ["week_offset", "p05", "p50", "p95", "anchor_weeks"]
+    if not profiles:
+        return pd.DataFrame(columns=columns)
+    matrix = np.vstack(profiles)
+    p05, p50, p95 = np.percentile(matrix, [5, 50, 95], axis=0)
+    return pd.DataFrame(
+        {
+            "week_offset": range(-span, span + 1),
+            "p05": p05,
+            "p50": p50,
+            "p95": p95,
+            "anchor_weeks": len(profiles),
+        },
+        columns=columns,
+    )
+
+
 def complete_months(video_files: list[Path]) -> set[str]:
     """Return the months whose every day lies in a collected window.
 
@@ -568,6 +705,16 @@ def complete_months(video_files: list[Path]) -> set[str]:
         if set(pd.date_range(month.start_time, month.end_time.normalize(), freq="D"))
         <= covered
     }
+
+
+def _cue_intervals(cues: pd.DataFrame, sizes: pd.Series) -> pd.DataFrame:
+    """Return cue shares in long form with group sizes and Wilson bounds."""
+    long = cues.melt(id_vars="cue", var_name="group", value_name="share")
+    long["n"] = long["group"].map(sizes).astype(float)
+    long["low"], long["high"] = wilson_interval(
+        (long["share"] * long["n"]).round(), long["n"]
+    )
+    return long
 
 
 def summarize_corpus(
@@ -624,6 +771,15 @@ def summarize_corpus(
     monthly["complete"] = (
         monthly["month"].isin(full_months) if full_months is not None else True
     )
+    # Months differ in length by up to 10%, so trends use videos per day.
+    monthly["days"] = pd.PeriodIndex(monthly["month"], freq="M").days_in_month
+    monthly["videos_per_day"] = monthly["total"] / monthly["days"]
+    monthly["discourse"] = (
+        monthly["personal_experience"] + monthly["financial_commentary"]
+    )
+    monthly["discourse_low"], monthly["discourse_high"] = wilson_interval(
+        monthly["discourse"], monthly["total"]
+    )
 
     signal = corpus["bnpl_signal"].value_counts().rename("videos").reset_index()
 
@@ -661,19 +817,37 @@ def summarize_corpus(
 
     post_types = (
         corpus.groupby("post_type")
-        .agg(
-            videos=("id", "size"),
-            creators=("creator_id", "nunique"),
-            median_views=("view_count", "median"),
-            median_likes=("like_count", "median"),
-            median_comments=("comment_count", "median"),
-            median_shares=("share_count", "median"),
-        )
+        .agg(videos=("id", "size"), creators=("creator_id", "nunique"))
         .reindex(list(POST_TYPES))
         .dropna(how="all")
         .reset_index()
     )
     post_types["share"] = post_types["videos"] / post_types["videos"].sum()
+    post_types["share_low"], post_types["share_high"] = wilson_interval(
+        post_types["videos"], post_types["videos"].sum()
+    )
+    # Views keep accumulating after posting, so engagement is compared only
+    # for videos that were at least ENGAGEMENT_MIN_AGE_DAYS old when fetched.
+    fetched = pd.to_datetime(_column(corpus, "fetched_at"), utc=True, errors="coerce")
+    age_days = (fetched - corpus["created_at"].dt.tz_convert("UTC")).dt.days
+    aged = corpus.loc[age_days >= ENGAGEMENT_MIN_AGE_DAYS]
+    engagement = []
+    for post_type in post_types["post_type"]:
+        group = aged.loc[aged["post_type"] == post_type]
+        low, high = bootstrap_median_interval(group["view_count"])
+        engagement.append(
+            {
+                "post_type": post_type,
+                "engagement_videos": len(group),
+                "median_views": group["view_count"].median(),
+                "median_views_low": low,
+                "median_views_high": high,
+                "median_likes": group["like_count"].median(),
+                "median_comments": group["comment_count"].median(),
+                "median_shares": group["share_count"].median(),
+            }
+        )
+    post_types = post_types.merge(pd.DataFrame(engagement), on="post_type")
 
     profiled = creators.loc[creators["profiled"]]
     creator_types = (
@@ -691,6 +865,8 @@ def summarize_corpus(
         .reset_index()
     )
     cues_by_post_type.columns.name = None
+    post_type_sizes = corpus["post_type"].value_counts()
+    cue_intervals = _cue_intervals(cues_by_post_type, post_type_sizes)
     cues_by_period = (
         corpus.groupby("period")[CUE_COLUMNS]
         .mean()
@@ -726,6 +902,12 @@ def summarize_corpus(
         )
         comment_cues.columns.name = None
         comment_cues["all_comments"] = comments[CUE_COLUMNS].mean().to_numpy()
+    comment_sizes = (
+        comments["video_post_type"].value_counts()
+        if not comments.empty
+        else pd.Series(dtype=float)
+    )
+    comment_sizes["all_comments"] = len(comments)
 
     return {
         "monthly": monthly,
@@ -735,10 +917,15 @@ def summarize_corpus(
         "post_types": post_types,
         "creator_types": creator_types,
         "cues_by_post_type": cues_by_post_type,
+        "cue_intervals": cue_intervals,
         "cues_by_period": cues_by_period,
         "black_friday": black_friday_index(corpus),
+        "black_friday_reference": weekly_index_reference(corpus),
         "top_hashtags": top_hashtags,
         "comment_cues": comment_cues,
+        "comment_cue_intervals": _cue_intervals(comment_cues, comment_sizes)
+        if not comments.empty
+        else pd.DataFrame(),
     }
 
 
@@ -773,12 +960,12 @@ def _no_data_figure(title: str) -> Figure:
 
 
 def plot_monthly_volume(monthly: pd.DataFrame) -> Figure:
-    """Plot BNPL videos per month with CCD2 and Black Friday marked.
+    """Plot BNPL videos per day, by month, with CCD2 and Black Friday marked.
 
     Parameters
     ----------
     monthly : pandas.DataFrame
-        ``month`` (``YYYY-MM``) and ``total`` columns.
+        ``month`` (``YYYY-MM``) and ``videos_per_day`` columns.
 
     Returns
     -------
@@ -801,7 +988,7 @@ def plot_monthly_volume(monthly: pd.DataFrame) -> Figure:
     months = pd.PeriodIndex(monthly["month"], freq="M").to_timestamp()
     axis.plot(
         months,
-        monthly["total"],
+        monthly["videos_per_day"],
         color=SERIES_COLORS[0],
         linewidth=2,
         marker="o",
@@ -826,9 +1013,13 @@ def plot_monthly_volume(monthly: pd.DataFrame) -> Figure:
                 fontsize=8,
                 color=MUTED_INK,
             )
-    axis.set_ylabel("BNPL videos per month", color=MUTED_INK)
+    axis.set_ylabel("BNPL videos per day", color=MUTED_INK)
     axis.set_ylim(bottom=0)
-    _title(axis, "Italian TikTok videos mentioning BNPL")
+    _title(
+        axis,
+        "Italian TikTok videos mentioning BNPL",
+        "Monthly average per day, so months of different length are comparable",
+    )
     _style_axes(axis)
     figure.tight_layout()
     return figure
@@ -855,19 +1046,36 @@ def plot_discourse_share(monthly: pd.DataFrame) -> Figure:
     Notes
     -----
     A share isolates the change in what is said from the growth in how much
-    is posted.
+    is posted. The shaded band is the 95% Wilson interval: months whose bands
+    overlap are not distinguishable, given how few discourse posts there are.
     """
     if monthly.empty:
         return _no_data_figure("Discourse share")
     figure, axis = plt.subplots(figsize=(9, 3.2))
     months = pd.PeriodIndex(monthly["month"], freq="M").to_timestamp()
-    axis.plot(months, monthly["discourse_share"], color=SERIES_COLORS[0], linewidth=2)
+    axis.fill_between(
+        months,
+        monthly["discourse_low"],
+        monthly["discourse_high"],
+        color=SERIES_COLORS[0],
+        alpha=0.15,
+        linewidth=0,
+        label="95% interval",
+    )
+    axis.plot(
+        months,
+        monthly["discourse_share"],
+        color=SERIES_COLORS[0],
+        linewidth=2,
+        label="share",
+    )
+    axis.legend(frameon=False, fontsize=8, loc="upper left")
     axis.yaxis.set_major_formatter(lambda value, _: f"{value:.1%}")
     axis.set_ylim(bottom=0)
     _title(
         axis,
         "Share of BNPL videos that are commentary or personal experience",
-        "Rest: shop and service ads, and unclassified posts",
+        "Band: 95% Wilson interval. Rest: shop ads and unclassified posts",
     )
     _style_axes(axis)
     figure.tight_layout()
@@ -992,7 +1200,71 @@ def plot_horizontal_bars(
     return figure
 
 
-def plot_cue_heatmap(cues: pd.DataFrame, title: str, subtitle: str) -> Figure:
+def plot_engagement(post_types: pd.DataFrame) -> Figure:
+    """Plot median views per post type with bootstrap 95% intervals.
+
+    Parameters
+    ----------
+    post_types : pandas.DataFrame
+        ``post_type``, ``median_views``, its bounds, and ``engagement_videos``.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Horizontal bars with error bars and the number of videos per bar.
+
+    Raises
+    ------
+    KeyError
+        If required columns are missing.
+
+    Notes
+    -----
+    Only videos at least ``ENGAGEMENT_MIN_AGE_DAYS`` old at collection enter
+    the medians, so recent videos do not drag a group down.
+    """
+    ordered = post_types.dropna(subset=["median_views"]).sort_values("median_views")
+    if ordered.empty:
+        return _no_data_figure("Engagement")
+    figure, axis = plt.subplots(figsize=(7, 0.45 * len(ordered) + 1.5))
+    error = [
+        ordered["median_views"] - ordered["median_views_low"],
+        ordered["median_views_high"] - ordered["median_views"],
+    ]
+    bars = axis.barh(
+        ordered["post_type"].str.replace("_", " "),
+        ordered["median_views"],
+        xerr=error,
+        color=SERIES_COLORS[0],
+        ecolor=MUTED_INK,
+        capsize=3,
+        height=0.6,
+    )
+    labels = [
+        f"{views:,.0f} (n={int(n):,})"
+        for views, n in zip(
+            ordered["median_views"], ordered["engagement_videos"], strict=True
+        )
+    ]
+    axis.bar_label(bars, labels=labels, padding=8, fontsize=8, color=MUTED_INK)
+    axis.set_xlim(right=float(ordered["median_views_high"].max()) * 1.35)
+    _title(
+        axis,
+        "Median views per video",
+        f"Videos at least {ENGAGEMENT_MIN_AGE_DAYS} days old; "
+        "bars: bootstrap 95% interval",
+    )
+    _style_axes(axis, grid_axis="x")
+    figure.tight_layout()
+    return figure
+
+
+def plot_cue_heatmap(
+    cues: pd.DataFrame,
+    title: str,
+    subtitle: str,
+    intervals: pd.DataFrame | None = None,
+) -> Figure:
     """Plot cue mention rates as an annotated single-hue heatmap.
 
     Parameters
@@ -1001,6 +1273,9 @@ def plot_cue_heatmap(cues: pd.DataFrame, title: str, subtitle: str) -> Figure:
         ``cue`` plus one share column per group.
     title, subtitle : str
         Chart title and note.
+    intervals : pandas.DataFrame or None, default=None
+        Long table with ``cue``, ``group``, ``n``, ``low``, and ``high``;
+        groups smaller than ``SMALL_GROUP`` show their 95% interval.
 
     Returns
     -------
@@ -1018,8 +1293,10 @@ def plot_cue_heatmap(cues: pd.DataFrame, title: str, subtitle: str) -> Figure:
     only encoding.
     """
     table = cues.set_index("cue")
+    bounds = intervals.set_index(["cue", "group"]) if intervals is not None else None
+    row_height = 0.6 if bounds is not None else 0.45
     figure, axis = plt.subplots(
-        figsize=(1.5 * len(table.columns) + 3, 0.45 * len(table) + 1.6)
+        figsize=(1.7 * len(table.columns) + 3, row_height * len(table) + 1.6)
     )
     axis.imshow(
         table.to_numpy(dtype=float), cmap=SEQUENTIAL_CMAP, aspect="auto", vmin=0
@@ -1028,10 +1305,15 @@ def plot_cue_heatmap(cues: pd.DataFrame, title: str, subtitle: str) -> Figure:
     for row, cue in enumerate(table.index):
         for column, group in enumerate(table.columns):
             value = float(table.loc[cue, group])
+            label = f"{value:.0%}"
+            if bounds is not None and (cue, group) in bounds.index:
+                cell = bounds.loc[(cue, group)]
+                if cell["n"] < SMALL_GROUP:
+                    label += f"\n({cell['low']:.0%}-{cell['high']:.0%})"
             axis.text(
                 column,
                 row,
-                f"{value:.0%}",
+                label,
                 ha="center",
                 va="center",
                 fontsize=8,
@@ -1049,13 +1331,17 @@ def plot_cue_heatmap(cues: pd.DataFrame, title: str, subtitle: str) -> Figure:
     return figure
 
 
-def plot_black_friday(black_friday: pd.DataFrame) -> Figure:
+def plot_black_friday(
+    black_friday: pd.DataFrame, reference: pd.DataFrame | None = None
+) -> Figure:
     """Plot indexed weekly volume around each Black Friday.
 
     Parameters
     ----------
     black_friday : pandas.DataFrame
         Output of ``black_friday_index``.
+    reference : pandas.DataFrame or None, default=None
+        Output of ``weekly_index_reference``, drawn as a grey band.
 
     Returns
     -------
@@ -1073,6 +1359,16 @@ def plot_black_friday(black_friday: pd.DataFrame) -> Figure:
     the first slot.
     """
     figure, axis = plt.subplots(figsize=(7, 3.4))
+    if reference is not None and not reference.empty:
+        axis.fill_between(
+            reference["week_offset"],
+            reference["p05"],
+            reference["p95"],
+            color=GRID_INK,
+            alpha=0.6,
+            linewidth=0,
+            label="ordinary weeks (5-95%)",
+        )
     for color, (year, group) in zip(
         SERIES_COLORS, black_friday.groupby("year"), strict=False
     ):
@@ -1091,7 +1387,11 @@ def plot_black_friday(black_friday: pd.DataFrame) -> Figure:
     axis.set_ylabel("Index (6 weeks before = 100)", color=MUTED_INK)
     if not black_friday.empty:
         axis.legend(frameon=False, fontsize=8)
-    _title(axis, "BNPL videos around Black Friday")
+    _title(
+        axis,
+        "BNPL videos around Black Friday",
+        "Grey band: same index computed around every other week",
+    )
     _style_axes(axis)
     figure.tight_layout()
     return figure
@@ -1198,7 +1498,10 @@ def write_findings_summary(
         "",
         "## Post types",
         "",
-        markdown_table(tables["post_types"], percent_columns=("share",)),
+        markdown_table(
+            tables["post_types"],
+            percent_columns=("share", "share_low", "share_high"),
+        ),
         "",
         "## Providers named",
         "",
@@ -1208,12 +1511,13 @@ def write_findings_summary(
         "",
         markdown_table(tables["cues_by_post_type"], percent_columns=tuple(cue_shares)),
         "",
-        "## Black Friday (index, 6 weeks before = 100)",
+        "## Black Friday (index, 6 weeks before = 100; p05-p95: ordinary weeks)",
         "",
         markdown_table(
             tables["black_friday"]
             .pivot_table(index="week_offset", columns="year", values="index")
             .reset_index()
+            .merge(tables["black_friday_reference"], on="week_offset", how="left")
         ),
         "",
     ]
@@ -1292,6 +1596,10 @@ def build_figures(tables: dict[str, pd.DataFrame]) -> dict[str, Figure]:
     The pre/post CCD2 heatmap is drawn only once both periods have data.
     """
     complete = tables["monthly"].loc[tables["monthly"]["complete"]]
+    # Purchase enquiries describe comments; in captions they echo shop details.
+    video_cues = tables["cues_by_post_type"].loc[
+        tables["cues_by_post_type"]["cue"] != "purchase_enquiry"
+    ]
     figures = {
         "monthly_volume": plot_monthly_volume(complete),
         "discourse_share": plot_discourse_share(complete),
@@ -1308,13 +1616,7 @@ def build_figures(tables: dict[str, pd.DataFrame]) -> dict[str, Figure]:
             percent=True,
             count="videos",
         ),
-        "engagement_by_post_type": plot_horizontal_bars(
-            tables["post_types"],
-            "post_type",
-            "median_views",
-            "Median views per video",
-            "Snapshot at collection time",
-        ),
+        "engagement_by_post_type": plot_engagement(tables["post_types"]),
         "creator_types": plot_horizontal_bars(
             tables["creator_types"],
             "creator_type",
@@ -1324,11 +1626,14 @@ def build_figures(tables: dict[str, pd.DataFrame]) -> dict[str, Figure]:
             percent=True,
         ),
         "cues_by_post_type": plot_cue_heatmap(
-            tables["cues_by_post_type"],
+            video_cues,
             "Theme mentions by post type",
-            "Share of videos whose text matches each theme dictionary",
+            "Share of videos matching each dictionary; (95% interval) for small groups",
+            tables["cue_intervals"],
         ),
-        "black_friday": plot_black_friday(tables["black_friday"]),
+        "black_friday": plot_black_friday(
+            tables["black_friday"], tables["black_friday_reference"]
+        ),
         "top_hashtags": plot_horizontal_bars(
             tables["top_hashtags"],
             "hashtag",
@@ -1341,7 +1646,8 @@ def build_figures(tables: dict[str, pd.DataFrame]) -> dict[str, Figure]:
         figures["comment_cues"] = plot_cue_heatmap(
             tables["comment_cues"],
             "Theme mentions in comments",
-            "Share of comments, by the type of video they reply to",
+            "Share of comments by parent video type; (95% interval) for small groups",
+            tables["comment_cue_intervals"],
         )
     if {"pre_ccd2", "post_ccd2"} <= set(tables["cues_by_period"].columns):
         figures["cues_by_period"] = plot_cue_heatmap(
