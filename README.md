@@ -118,7 +118,9 @@ From the run of 26 October 2026: 97,166 BNPL videos from 8,099 accounts,
 covering January 2024 to August 2026, plus 18,078 comments on 309 videos and
 997 creator profiles. The weeks from 14 September to 18 October 2026 and about
 1,350 profiles are still to be collected. The tables, figures, and full
-interpretation are in `notebooks/tiktok_analysis.ipynb`.
+interpretation are in `notebooks/tiktok_analysis.ipynb`. Bracketed ranges
+are 95% intervals. They show how stable a number is given how many videos it
+rests on, not how biased it is (see [Validity and bias](#validity-and-bias)).
 
 1. **BNPL reaches people on TikTok mainly as a merchant feature.** 91% of BNPL
    videos are shop ads: "paga in 3 rate con Klarna" next to a price and a
@@ -129,26 +131,36 @@ interpretation are in `notebooks/tiktok_analysis.ipynb`.
 2. **Ads and critics tell opposite stories.** 31% of ads present BNPL as free
    and easy ("senza interessi", "0%"), and almost none mention fees, missed
    payments, or totals. In commentary, 33% discuss fees and failed payments,
-   20% losing track of installments, and 11% regulation. Commentary reaches no
-   more viewers than an ad: both have a median of about 1,050 views.
+   20% losing track of installments, and 11% regulation (95% intervals:
+   26-40%, 15-27%, and 7-17%). Among videos at least 90 days old, commentary
+   has a median of 1,388 views (920-2,078) and ads 1,057 (1,047-1,066). The
+   intervals overlap, so there is no evidence that critical content reaches
+   more people per video; there is simply far less of it.
 3. **Klarna dominates, and shops offer several providers side by side.**
    Klarna accounts for 66% of provider mentions and grew 6.6 times from the
    first quarter of 2024 to the second quarter of 2026; Scalapay grew 3.8
-   times. 18% of videos that name a provider name two or more. This is the
+   times. 17.9% of videos that name a provider name two or more. This is the
    checkout-level counterpart of the fragmentation the thesis studies.
-4. **Critical discussion is small but growing.** Commentary rose from 14 videos
-   in 2024 to 60 in 2025 and 85 in January-September 2026. It peaked in August
-   2026 around paying for groceries and holidays in installments, and posts
-   explaining the new consumer credit rules appear from that month.
+4. **Critical discussion is small but growing.** Commentary and first-person
+   posts rose from 0.09% of BNPL videos in 2024 (95% interval 0.06-0.15%) to
+   0.18% in 2025 and 0.25% in January-August 2026 (0.21-0.31%). The 2024 and
+   2026 intervals do not overlap. Commentary alone went from 14 videos in 2024
+   to 60 in 2025 and 76 in January-August 2026. August 2026 is the highest
+   month (0.64%), around paying for groceries and holidays in installments
+   and the coming consumer credit rules. Its interval overlaps earlier months,
+   so the single-month peak is suggestive only.
 5. **TikTok does not show how users track their commitments.** Comments under
-   ads are mostly purchase questions (24% ask about price, availability, or
-   shipping). Theme words appear in under 5% of comments. Evidence for RQ1 and
+   ads are mostly purchase questions: 24.1% (23.3-24.9%) ask about price,
+   availability, or shipping, against 2.1% under commentary. Theme words appear
+   in under 5% of comments. Evidence for RQ1 and
    RQ2 therefore has to come from the interviews and artefact walk-throughs.
-6. **Volume and timing.** BNPL content roughly quadrupled, from about 1,300
-   videos a month in early 2024 to about 5,900 in July 2026, with a dip every
-   August. There is no consistent Black Friday peak in posting. No data after
-   CCD2 exists yet; the before-and-after comparison appears automatically
-   after a rerun.
+6. **Volume and timing.** BNPL content roughly quadrupled, from about 44
+   videos a day in the first half of 2024 to about 187 a day in May-July 2026,
+   with a dip every August. Black Friday weeks fall inside the range of
+   ordinary weekly variation (5-95% band from 130 reference weeks), so posting
+   shows no Black Friday effect; Christmas week is at the bottom of the range
+   in both years. No data after CCD2 exists yet; the before-and-after
+   comparison appears automatically after a rerun.
 
 ## Validity and bias
 
@@ -205,14 +217,27 @@ the agreement with the rules.
 
 **What the statistics can and cannot support.**
 - The corpus is everything the API returned for the query, not a random
-  sample of a defined population. Confidence intervals and significance tests
-  about "Italian TikTok" or "young Italians" would therefore not be
-  meaningful. The figures are descriptive.
+  sample of a defined population. Population-level significance tests about
+  "Italian TikTok" or "young Italians" would therefore not be meaningful, and
+  the analysis does not run any. The figures are descriptive.
+- Where a number rests on few videos, the analysis shows how stable it is.
+  This treats posting as a random process; it is not sampling error.
+  - Shares carry 95% Wilson intervals, which suit small counts and rates
+    near zero.
+  - Median views carry 95% percentile bootstrap intervals (2,000 resamples,
+    seed 42).
+  - The Black Friday index is compared with the same index computed around
+    every other week, shown as a 5-95% band.
+
+  These intervals do not cover selection bias, label error, or API coverage.
+  A narrow interval means a number is stable, not that it is correct.
 - Rare categories rest on small numbers: 159 commentary videos, 37
-  first-person posts, and 26 discourse posts in the August 2026 peak.
-  Percentages for them move a lot when a few videos are added. Report counts
-  with their denominators, and avoid strong claims about month-to-month
-  changes.
+  first-person posts, and 0-26 discourse posts a month. Their intervals are
+  wide, so changes are claimed only where intervals do not overlap, for
+  example when comparing years rather than months. Counts are always reported
+  with their denominators.
+- Monthly volumes are expressed per day, because months differ in length by
+  up to 10%.
 - Content is concentrated: 100 accounts produce 47% of videos. Shares
   therefore partly reflect the habits of a few hundred shops rather than
   broad behaviour.
@@ -220,8 +245,9 @@ the agreement with the rules.
   and changes in API coverage. Compare shapes and shares, not absolute
   levels, and do not read growth in posts as growth in BNPL use.
 - Engagement counts are a single snapshot taken at collection time and are
-  shaped by the recommendation algorithm. They are not comparable across
-  videos of different ages.
+  shaped by the recommendation algorithm. Views keep growing after posting,
+  so engagement is compared only for videos at least 90 days old at
+  collection. The comparison remains descriptive.
 
 **What makes the conclusions valid.** Claims stay within what the data can
 carry:

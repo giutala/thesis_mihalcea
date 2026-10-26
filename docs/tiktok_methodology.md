@@ -138,6 +138,24 @@ with each record.
    November 2026 onward are labelled `post_ccd2`. Black Friday weeks are
    indexed against the mean of the six preceding weeks.
 
+## Statistical approach
+
+The analysis is descriptive. The corpus is everything the API returned for a
+fixed query, not a random sample, so it reports counts with denominators and
+does not test hypotheses about a population. Uncertainty is quantified only
+where a number rests on few videos:
+
+| Quantity | Method | Where |
+|---|---|---|
+| Shares of post types, cues, and discourse | 95% Wilson score interval | `post_types.csv`, `cue_intervals.csv`, `comment_cue_intervals.csv`, `monthly.csv`; drawn for groups under 1,000 videos and on the discourse-share chart |
+| Median views by post type | 95% percentile bootstrap, 2,000 resamples, seed 42, videos at least 90 days old at collection | `post_types.csv`, `engagement_by_post_type.png` |
+| Black Friday weeks | The same 13-week index computed around every week with six weeks on each side; 5th-95th percentile band | `black_friday_reference.csv`, `black_friday.png` |
+| Monthly volume | Videos per day, to remove month-length differences | `monthly.csv`, `monthly_volume.png` |
+
+These intervals treat posting as a random process and measure how stable a
+number is. They do not cover selection bias, label error, or API coverage.
+Changes are claimed only where intervals do not overlap.
+
 ## Outputs
 
 | Location | Content | In Git |
@@ -203,14 +221,27 @@ the agreement with the rules.
 
 **What the statistics can and cannot support.**
 - The corpus is everything the API returned for the query, not a random
-  sample of a defined population. Confidence intervals and significance tests
-  about "Italian TikTok" or "young Italians" would therefore not be
-  meaningful. The figures are descriptive.
+  sample of a defined population. Population-level significance tests about
+  "Italian TikTok" or "young Italians" would therefore not be meaningful, and
+  the analysis does not run any. The figures are descriptive.
+- Where a number rests on few videos, the analysis shows how stable it is.
+  This treats posting as a random process; it is not sampling error.
+  - Shares carry 95% Wilson intervals, which suit small counts and rates
+    near zero.
+  - Median views carry 95% percentile bootstrap intervals (2,000 resamples,
+    seed 42).
+  - The Black Friday index is compared with the same index computed around
+    every other week, shown as a 5-95% band.
+
+  These intervals do not cover selection bias, label error, or API coverage.
+  A narrow interval means a number is stable, not that it is correct.
 - Rare categories rest on small numbers: 159 commentary videos, 37
-  first-person posts, and 26 discourse posts in the August 2026 peak.
-  Percentages for them move a lot when a few videos are added. Report counts
-  with their denominators, and avoid strong claims about month-to-month
-  changes.
+  first-person posts, and 0-26 discourse posts a month. Their intervals are
+  wide, so changes are claimed only where intervals do not overlap, for
+  example when comparing years rather than months. Counts are always reported
+  with their denominators.
+- Monthly volumes are expressed per day, because months differ in length by
+  up to 10%.
 - Content is concentrated: 100 accounts produce 47% of videos. Shares
   therefore partly reflect the habits of a few hundred shops rather than
   broad behaviour.
@@ -218,8 +249,9 @@ the agreement with the rules.
   and changes in API coverage. Compare shapes and shares, not absolute
   levels, and do not read growth in posts as growth in BNPL use.
 - Engagement counts are a single snapshot taken at collection time and are
-  shaped by the recommendation algorithm. They are not comparable across
-  videos of different ages.
+  shaped by the recommendation algorithm. Views keep growing after posting,
+  so engagement is compared only for videos at least 90 days old at
+  collection. The comparison remains descriptive.
 
 **What makes the conclusions valid.** Claims stay within what the data can
 carry:
