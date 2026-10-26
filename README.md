@@ -7,7 +7,8 @@ commitments. The corpus feeds the market, benchmark, and regulatory analysis.
 
 It is not a sample of the thesis population (20-27 year olds): the API reports
 no age, and `region_code` is only the country of the creator's account. All
-labels come from transparent text rules, with no manual coding. The full
+labels come from transparent text rules, with no manual coding. Read the
+results together with [Validity and bias](#validity-and-bias). The full
 method, pilot, and limitations are in `docs/tiktok_methodology.md`.
 
 ## Folder layout
@@ -149,10 +150,92 @@ interpretation are in `notebooks/tiktok_analysis.ipynb`.
    CCD2 exists yet; the before-and-after comparison appears automatically
    after a rerun.
 
-**Limits.** Labels are keyword rules applied to captions, hashtags, and
-transcripts, not validated codes. The corpus covers creators, not viewers, and
-gives no information about age. Volume reflects TikTok's growth and API
-coverage as well as BNPL adoption.
+## Validity and bias
+
+These results describe what was posted publicly on one platform. They are not
+measurements of how young adults in Italy use BNPL. Read every number with the
+following biases in mind.
+
+**One platform, not the whole media environment.** TikTok is one app among
+many: Instagram, YouTube, Facebook, Telegram, and the providers' own apps and
+websites are not covered. TikTok has its own formats, such as short videos,
+TikTok Shop, and affiliate content, and its own recommendation algorithm.
+Results such as "91% of BNPL videos are shop ads" hold for TikTok and cannot
+be generalized to social media as a whole.
+
+**The link to young adults is an assumption, not a measurement.** The thesis
+studies 20-27 year olds. The Research API returns no age for creators or
+viewers. Using TikTok rests on a working hypothesis: TikTok's audience skews
+young, with the 18-24 group commonly reported as its largest age group, so
+BNPL content on TikTok approximates what young adults in Italy are exposed to.
+Before relying on this hypothesis, the thesis should:
+
+- cite a current audience source for Italy, such as DataReportal or
+  Audiweb/AGCOM, with its date;
+- state that the hypothesis concerns exposure, not use;
+- keep in mind that creators are not viewers, so a shop's video can be posted
+  by anyone and watched by anyone.
+
+**Selection bias in what was collected.**
+- `region_code` is the country where the creator's account is registered. It
+  is not the viewer's country or the language, and Italian accounts post some
+  content in other languages.
+- API keyword search covers descriptions only, so videos that mention BNPL
+  only in speech or on screen are missed unless a hashtag matches.
+- The search terms were chosen in a pilot. Different terms would give a
+  different corpus, and colloquial or misspelled mentions are under-covered.
+- Only public videos still online at collection time are included. Deleted,
+  private, and moderated videos are missing, which may remove the most
+  critical or problematic content.
+- TikTok does not document how complete Research API results are. Weekly
+  counts swing by up to ±40% without an obvious cause, which points to
+  variation in coverage.
+- Comments were collected for the most-commented videos only, which favours
+  popular videos. Profiles cover a selected subset of creators.
+
+**Measurement error in the labels.** Post types, creator types, and themes are
+keyword rules applied to short, informal text. They miss irony, negation,
+slang, and anything shown only in the video. Reading samples showed that about
+half of the "personal experience" posts are creator product reviews. The rules
+were checked by reading samples, not formally validated: there is no
+precision, recall, or inter-rater agreement estimate. If the thesis relies on
+a label-based share, a validation check would make it defensible. This means
+hand-labelling a random sample, about 100 videos per post type, and reporting
+the agreement with the rules.
+
+**What the statistics can and cannot support.**
+- The corpus is everything the API returned for the query, not a random
+  sample of a defined population. Confidence intervals and significance tests
+  about "Italian TikTok" or "young Italians" would therefore not be
+  meaningful. The figures are descriptive.
+- Rare categories rest on small numbers: 159 commentary videos, 37
+  first-person posts, and 26 discourse posts in the August 2026 peak.
+  Percentages for them move a lot when a few videos are added. Report counts
+  with their denominators, and avoid strong claims about month-to-month
+  changes.
+- Content is concentrated: 100 accounts produce 47% of videos. Shares
+  therefore partly reflect the habits of a few hundred shops rather than
+  broad behaviour.
+- Trends over time mix three things: changes in BNPL, TikTok's own growth,
+  and changes in API coverage. Compare shapes and shares, not absolute
+  levels, and do not read growth in posts as growth in BNPL use.
+- Engagement counts are a single snapshot taken at collection time and are
+  shaped by the recommendation algorithm. They are not comparable across
+  videos of different ages.
+
+**What makes the conclusions valid.** Claims stay within what the data can
+carry:
+
+- they concern public content from accounts registered in Italy that matches
+  these terms;
+- they report counts with denominators and state the collection date;
+- they are triangulated with the thesis's survey and interviews, which do
+  measure the 20-27 population.
+
+The search query, field list, collection log, and labelling rules are all
+recorded (`query_config.json`, `collection_log.jsonl`,
+`scripts/tiktok_terms.py`). Anyone can therefore reproduce the corpus
+definition and check how each label was assigned.
 
 ## Quality checks
 
